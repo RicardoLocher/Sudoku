@@ -1,0 +1,31 @@
+[package]
+name = "Sudoku"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "sudoku"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "sudoku"
+path = "src/main.rs"
+
+[features]
+default = ["desktop"]
+desktop = ["dep:eframe", "dep:egui"]
+
+[dependencies]
+eframe = { version = "0.37", optional = true, default-features = false, features = [
+    "glow",
+    "default_fonts",
+    "wayland",
+    "x11",
+    "android-native-activity",
+] }
+egui = { version = "0.37", optional = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }
+winit = { version = "0.30", default-features = false, features = ["android-native-activity"] }
