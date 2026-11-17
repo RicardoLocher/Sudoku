@@ -18,6 +18,10 @@ enum Move {
         col: usize,
         previous: u16,
     },
+    /// Auto-notes refresh: every changed cell with its previous and new mask.
+    FillNotes {
+        changes: Vec<(usize, usize, u16, u16)>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -240,6 +244,43 @@ impl Game {
         self.notes[row][col] & (1u16 << digit) != 0
     }
 
+    /// Replace every cell's notes with the pencil candidates for the board so
+    /// far: an empty cell gets each digit that does not already appear in its
+    /// row, column or box, including its own solution digit (which is always a
+    /// legal candidate). Filled and given cells get no notes. Recorded as a
+    /// single undo step; returns `true` when any note actually changed.
+    pub fn fill_auto_notes(&mut self) -> bool {
+        let mut changes: Vec<(usize, usize, u16, u16)> = Vec::new();
+        for row in 0..SIZE {
+            for col in 0..SIZE {
+                let target = if self.cells[row][col] != EMPTY {
+                    0
+                } else {
+                    (1..=9u8)
+                        .filter(|&digit| is_safe(&self.cells, row, col, digit))
+                        .fold(0u16, |mask, digit| mask | (1u16 << digit))
+                };
+                let current = self.notes[row][col];
+                if target != current {
+                    changes.push((row, col, current, target));
+                }
+            }
+        }
+
+        if changes.is_empty() {
+            return false;
+        }
+
+        self.history.push(Move::FillNotes {
+            changes: changes.clone(),
+        });
+        self.redo.clear();
+        for (row, col, _, next) in changes {
+            self.notes[row][col] = next;
+        }
+        true
+    }
+
     pub fn undo(&mut self) -> bool {
         match self.history.pop() {
             Some(mv) => {
@@ -285,6 +326,11 @@ impl Game {
                 }
             }
             Move::Notes { row, col, previous } => self.notes[*row][*col] = *previous,
+            Move::FillNotes { changes } => {
+                for (row, col, previous, _) in changes {
+                    self.notes[*row][*col] = *previous;
+                }
+            }
         }
     }
 
@@ -313,6 +359,11 @@ impl Game {
                 }
             }
             Move::Notes { row, col, previous } => self.notes[*row][*col] = *previous,
+            Move::FillNotes { changes } => {
+                for (row, col, _, next) in changes {
+                    self.notes[*row][*col] = *next;
+                }
+            }
         }
     }
 
@@ -871,6 +922,166 @@ mod tests {
         assert!(
             !game.has_note(neighbour.0, neighbour.1, value),
             "redo should re-apply the note cleanup"
+        );
+    }
+
+    fn all_cells() -> impl Iterator<Item = (usize, usize)> {
+        (0..SIZE).flat_map(|r| (0..SIZE).map(move |c| (r, c)))
+    }
+
+    fn total_notes(game: &Game) -> u16 {
+        all_cells().map(|(r, c)| game.notes(r, c)).sum()
+    }
+
+    fn expected_notes(game: &Game, row: usize, col: usize) -> u16 {
+        (1..=9u8)
+            .filter(|&d| is_safe(&game.cells, row, col, d))
+            .map(|d| 1u16 << d)
+            .sum()
+    }
+
+    /// First empty cell whose only legal candidate is its own solution digit,
+    /// i.e. every other digit already sits in its row, column or box.
+    fn single_candidate_cell(game: &Game) -> (usize, usize) {
+        all_cells()
+            .filter(|&(r, c)| game.value(r, c) == EMPTY)
+            .find(|&(r, c)| {
+                let own = game.solution[r][c];
+                !(1..=9u8).any(|d| d != own && game.note_is_legal(r, c, d))
+                    && game.note_is_legal(r, c, own)
+            })
+            .expect("the puzzle has a single-candidate empty cell")
+    }
+
+    /// First empty cell that gets at least one non-solution pencil note, with
+    /// that digit.
+    fn cell_with_pencil(game: &Game) -> (usize, usize, u8) {
+        all_cells()
+            .filter(|&(r, c)| game.value(r, c) == EMPTY)
+            .find_map(|(r, c)| {
+                (1..=9u8)
+                    .find(|&d| d != game.solution[r][c] && game.note_is_legal(r, c, d))
+                    .map(|digit| (r, c, digit))
+            })
+            .expect("a cell takes a non-solution pencil note")
+    }
+
+    #[test]
+    fn auto_notes_fill_candidates() {
+        let mut game = game();
+        assert_eq!(game.notes(0, 0), 0);
+        assert!(game.fill_auto_notes());
+        for (row, col) in all_cells() {
+            if game.value(row, col) == EMPTY {
+                let mask = game.notes(row, col);
+                assert_eq!(
+                    mask,
+                    expected_notes(&game, row, col),
+                    "wrong auto notes at ({row}, {col})"
+                );
+                assert!(
+                    game.has_note(row, col, game.solution[row][col]),
+                    "auto notes must include the solution digit at ({row}, {col})"
+                );
+            } else {
+                assert_eq!(game.notes(row, col), 0);
+            }
+        }
+
+        let (row, col, digit) = cell_with_pencil(&game);
+        assert!(
+            game.notes(row, col) & (1u16 << digit) != 0,
+            "empty cells should receive pencil notes"
+        );
+    }
+
+    #[test]
+    fn auto_notes_is_idempotent() {
+        let mut game = game();
+        assert!(game.fill_auto_notes());
+        let filled = total_notes(&game);
+        assert!(filled > 0);
+        assert!(!game.fill_auto_notes(), "second fill changes nothing");
+        assert!(!game.fill_auto_notes(), "third fill changes nothing");
+        assert_eq!(total_notes(&game), filled);
+
+        assert!(game.undo(), "first undo reverts the fill");
+        assert_eq!(total_notes(&game), 0);
+        assert!(
+            !game.can_undo(),
+            "only one history step should have been recorded"
+        );
+    }
+
+    #[test]
+    fn auto_notes_undo_restores_previous_notes() {
+        let mut game = game();
+        let (row, col, digit) = cell_with_pencil(&game);
+        game.toggle_note(row, col, digit);
+        assert_eq!(game.notes(row, col), 1u16 << digit);
+
+        assert!(game.fill_auto_notes());
+        let filled = game.notes(row, col);
+
+        assert!(game.undo());
+        assert_eq!(
+            game.notes(row, col),
+            1u16 << digit,
+            "undo restores exactly the manual note"
+        );
+        for (r, c) in all_cells() {
+            if (r, c) != (row, col) {
+                assert_eq!(game.notes(r, c), 0);
+            }
+        }
+
+        assert!(game.redo());
+        assert_eq!(game.notes(row, col), filled, "redo re-applies the fill");
+    }
+
+    #[test]
+    fn auto_notes_include_single_candidate_solution_digit() {
+        let mut game = game();
+        let (row, col) = single_candidate_cell(&game);
+        assert!(game.fill_auto_notes());
+        assert_eq!(
+            game.notes(row, col),
+            1u16 << game.solution[row][col],
+            "a cell whose only candidate is its solution digit notes that digit"
+        );
+    }
+
+    #[test]
+    fn auto_notes_refresh_after_placement() {
+        let mut game = game();
+        let (row, col, digit) = cell_with_pencil(&game);
+        let peer = crate::grid::peers(row, col)
+            .find(|&(r, c)| (r, c) != (row, col) && !game.is_given(r, c))
+            .expect("cell has a non-given peer");
+
+        assert!(game.fill_auto_notes());
+        assert!(game.has_note(row, col, digit));
+
+        game.play(peer.0, peer.1, digit);
+        assert!(
+            !game.has_note(row, col, digit),
+            "placing a digit strips it from peer notes"
+        );
+
+        // Refreshing recomputes the whole board: every empty cell matches the
+        // candidates for the current grid, and the placed peer digit is gone.
+        game.fill_auto_notes();
+        let mut checked = 0;
+        for (r, c) in all_cells() {
+            if game.value(r, c) == EMPTY {
+                assert_eq!(game.notes(r, c), expected_notes(&game, r, c));
+                checked += 1;
+            }
+        }
+        assert!(checked > 0);
+        assert!(
+            !game.has_note(row, col, digit),
+            "the placed peer digit stays excluded from its peers"
         );
     }
 }

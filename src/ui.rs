@@ -19,6 +19,9 @@ use eframe::egui::{
 /// Logical dp target for a comfortable touch target.
 const TAP_MIN: f32 = 48.0;
 
+/// Height of the action-row buttons (undo / auto notes / notes / hint).
+const ACTION_H: f32 = 42.0;
+
 /// Which overlay (if any) is currently shown on top of the game.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 enum Dialog {
@@ -296,6 +299,18 @@ impl SudokuApp {
         }
     }
 
+    /// Replace all pencil notes with the candidates for the current board in a
+    /// single undoable step.
+    fn auto_notes(&mut self) {
+        if self.game.is_complete() {
+            return;
+        }
+        if self.game.fill_auto_notes() {
+            self.start_clock();
+            self.after_move();
+        }
+    }
+
     /// Begin (or resume) the clock. Safe to call repeatedly.
     fn start_clock(&mut self) {
         self.started = true;
@@ -405,12 +420,12 @@ impl SudokuApp {
                 for i in 0..SIZE {
                     painter.rect_filled(
                         Self::cell_rect(grid_rect, cell, sel_row, i),
-                        radius,
+                        CornerRadius::ZERO,
                         palette.highlight_rowcol,
                     );
                     painter.rect_filled(
                         Self::cell_rect(grid_rect, cell, i, sel_col),
-                        radius,
+                        CornerRadius::ZERO,
                         palette.highlight_rowcol,
                     );
                 }
@@ -420,7 +435,7 @@ impl SudokuApp {
                     for c in box_col..box_col + 3 {
                         painter.rect_filled(
                             Self::cell_rect(grid_rect, cell, r, c),
-                            radius,
+                            CornerRadius::ZERO,
                             palette.highlight_box,
                         );
                     }
@@ -434,7 +449,7 @@ impl SudokuApp {
                         let rect = Self::cell_rect(grid_rect, cell, r, c);
                         if self.game.value(r, c) == selected_value {
                             // Cells already holding the digit get a full highlight.
-                            painter.rect_filled(rect, radius, palette.highlight_same);
+                            painter.rect_filled(rect, CornerRadius::ZERO, palette.highlight_same);
                         } else if self.game.value(r, c) == 0
                             && self.game.has_note(r, c, selected_value)
                         {
@@ -451,12 +466,12 @@ impl SudokuApp {
             let sel = Self::cell_rect(grid_rect, cell, sel_row, sel_col);
             painter.rect_filled(
                 sel,
-                radius,
+                CornerRadius::ZERO,
                 palette.highlight_selected.gamma_multiply(pulse),
             );
             painter.rect_stroke(
                 sel.shrink(1.0),
-                radius,
+                CornerRadius::ZERO,
                 Stroke::new(2.0, palette.accent),
                 egui::StrokeKind::Inside,
             );
@@ -736,51 +751,33 @@ impl SudokuApp {
     // ---------------------------------------------------------- number pad
 
     fn draw_number_pad(&mut self, ui: &mut egui::Ui, palette: &Palette) {
-        // Wide layout (tablet/landscape): a single row of 9 + erase.
-        // Narrow (phone portrait): two rows of 5 with the erase on the last.
-        let wide = ui.available_width() >= 460.0;
-        let per_row = if wide { 10 } else { 5 };
-        let spacing = 6.0;
+        // The nine digit buttons (erase lives in the action row) live on a
+        // single row, growing to fill the available width on wide screens and
+        // shrinking on narrow ones.
+        let per_row = 9;
+        let spacing = 0.0;
         let full = ui.available_width();
-        let size = ((full - spacing * (per_row as f32 - 1.0)) / per_row as f32).min(TAP_MIN + 8.0);
+        let size = (full - spacing * (per_row as f32 - 1.0)) / per_row as f32;
 
-        let digits: Vec<u8> = (1..=9u8).collect();
-        let chunks: Vec<Vec<u8>> = if wide {
-            vec![digits.clone()]
-        } else {
-            vec![digits[0..5].to_vec(), digits[5..9].to_vec()]
-        };
-
-        // Left-handed mode mirrors the pad: erase first (left), actions reversed.
+        // Left-handed mode mirrors the pad.
         let left_handed = self.settings.left_handed;
-        for (i, chunk) in chunks.iter().enumerate() {
-            if i > 0 {
-                ui.add_space(spacing);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = spacing;
+            let mut digits: Vec<u8> = (1..=9u8).collect();
+            if left_handed {
+                digits.reverse();
             }
-            let with_erase = wide || i == chunks.len() - 1;
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = spacing;
-                let mut digits: Vec<u8> = chunk.clone();
-                if left_handed {
-                    digits.reverse();
-                }
-                if left_handed && with_erase {
-                    self.draw_pad_button(ui, palette, size, None);
-                }
-                for &digit in &digits {
-                    self.draw_pad_button(ui, palette, size, Some(digit));
-                }
-                if !left_handed && with_erase {
-                    self.draw_pad_button(ui, palette, size, None);
-                }
-            });
-        }
+            for &digit in &digits {
+                self.draw_pad_button(ui, palette, size, digit);
+            }
+        });
 
         ui.add_space(8.0);
 
-        // Action row: undo / redo / notes / hint.
+        // Action row: undo / auto notes / notes / hint / erase.
+        let spacing = 6.0;
         let actions = ui.available_width();
-        let ab = (actions / 4.0) - 6.0;
+        let ab = ((actions - spacing * 4.0) / 5.0).max(0.0);
         ui.with_layout(
             if left_handed {
                 Layout::right_to_left(Align::Min)
@@ -788,9 +785,9 @@ impl SudokuApp {
                 Layout::left_to_right(Align::Min)
             },
             |ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.spacing_mut().item_spacing.x = spacing;
                 let ctx = ui.ctx().clone();
-                let icon_size = ab.min(TAP_MIN) * 0.5;
+                let icon_size = ab.min(TAP_MIN) * 0.45;
                 if icon_action_button(
                     ui,
                     &mut self.icons,
@@ -814,14 +811,14 @@ impl SudokuApp {
                     palette,
                     ab,
                     icon_size,
-                    Icon::Redo,
+                    Icon::AutoNotes,
                     palette.pad_text,
-                    self.game.can_redo(),
+                    !self.game.is_complete(),
                 )
+                .on_hover_text("Auto notes")
                 .clicked()
                 {
-                    self.game.redo();
-                    self.save_now();
+                    self.auto_notes();
                 }
                 let (notes_fill, notes_tint) = if self.note_mode {
                     (palette.accent, Color32::WHITE)
@@ -860,25 +857,29 @@ impl SudokuApp {
                 {
                     self.hint();
                 }
+                if icon_action_button(
+                    ui,
+                    &mut self.icons,
+                    &ctx,
+                    palette,
+                    ab,
+                    icon_size,
+                    Icon::Erase,
+                    palette.pad_text,
+                    true,
+                )
+                .on_hover_text("Erase")
+                .clicked()
+                {
+                    self.erase();
+                }
             },
         );
     }
 
-    fn draw_pad_button(
-        &mut self,
-        ui: &mut egui::Ui,
-        palette: &Palette,
-        size: f32,
-        digit: Option<u8>,
-    ) {
-        let (label, sub, complete) = match digit {
-            Some(d) => (
-                d.to_string(),
-                Some(format!("{}", self.game.digit_remaining(d))),
-                self.game.is_digit_complete(d),
-            ),
-            None => ("⌫".to_string(), None, false),
-        };
+    fn draw_pad_button(&mut self, ui: &mut egui::Ui, palette: &Palette, size: f32, digit: u8) {
+        let sub = format!("{}", self.game.digit_remaining(digit));
+        let complete = self.game.is_digit_complete(digit);
 
         let text_color = if complete {
             palette.pad_done_text
@@ -886,51 +887,53 @@ impl SudokuApp {
             palette.pad_text
         };
 
-        let button = match digit {
-            Some(_) => egui::Button::new(
-                RichText::new(&label)
-                    .size(size * 0.42)
-                    .color(text_color)
-                    .strong(),
-            ),
-            None => {
-                egui::Button::image(
-                    self.icons
-                        .image(ui.ctx(), Icon::Erase, size * 0.5, text_color),
-                )
-            }
+        let sense = if complete {
+            Sense::hover()
+        } else {
+            Sense::click()
+        };
+        let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), sense);
+
+        if !complete {
+            let highlight = if response.is_pointer_button_down_on() {
+                palette.accent
+            } else if response.hovered() {
+                palette.accent_weak
+            } else {
+                palette.pad_bg
+            };
+            ui.painter().rect_filled(rect, CornerRadius::ZERO, highlight);
         }
-        .fill(palette.pad_bg)
-        .corner_radius(CornerRadius::same(12))
-        .min_size(Vec2::new(size, size));
 
-        let response = ui
-            .add_enabled(!complete, button)
-            .on_hover_text(match digit {
-                Some(_) => "Long-press to toggle a note",
-                None => "Erase",
-            });
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            digit.to_string(),
+            FontId::proportional(size * 0.72),
+            text_color,
+        );
 
-        if let (Some(d), Some(sub)) = (digit, sub) {
-            // Painting the remaining-count under the centered digit.
-            let rect = response.rect;
-            ui.painter().text(
-                rect.center_bottom() - Vec2::new(0.0, size * 0.16),
-                Align2::CENTER_CENTER,
-                sub,
-                FontId::proportional(size * 0.2),
-                palette.pad_count_text,
-            );
+        // Painting the remaining-count under the centered digit.
+        ui.painter().text(
+            rect.center_bottom() - Vec2::new(0.0, size * 0.16),
+            Align2::CENTER_CENTER,
+            sub,
+            FontId::proportional(size * 0.2),
+            palette.pad_count_text,
+        );
 
-            if response.clicked() {
-                self.input_digit(d);
-            } else if response.long_touched() || response.secondary_clicked() {
-                // Long-press a digit = switch to notes and toggle it.
-                self.note_mode = true;
-                self.input_digit(d);
-            }
-        } else if response.clicked() {
-            self.erase();
+        let response = if complete {
+            response
+        } else {
+            response.on_hover_text("Long-press to toggle a note")
+        };
+
+        if response.clicked() {
+            self.input_digit(digit);
+        } else if response.long_touched() || response.secondary_clicked() {
+            // Long-press a digit = switch to notes and toggle it.
+            self.note_mode = true;
+            self.input_digit(digit);
         }
     }
 
@@ -1234,10 +1237,6 @@ impl SudokuApp {
                     self.game.undo();
                     self.save_now();
                 }
-                egui::Key::Y if modifiers.command => {
-                    self.game.redo();
-                    self.save_now();
-                }
                 egui::Key::N => self.note_mode = !self.note_mode,
                 egui::Key::H => self.hint(),
                 _ => {}
@@ -1270,7 +1269,7 @@ fn icon_button(
     }
 }
 
-/// A wide action button (undo/redo/hint) filled with the palette's pad color.
+/// A wide action button (undo/auto notes/hint) filled with the palette's pad color.
 #[allow(clippy::too_many_arguments)]
 fn icon_action_button(
     ui: &mut egui::Ui,
@@ -1309,12 +1308,24 @@ fn icon_action_button_fill(
     fill: Color32,
     enabled: bool,
 ) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(width, ACTION_H), Sense::click());
+    let visuals = ui.style().interact(&response);
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(12), fill);
+    let tint = if enabled {
+        tint
+    } else {
+        visuals.text_color()
+    };
+    let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(icon_size));
     let image = icons.image(ctx, icon, icon_size, tint);
-    let button = egui::Button::image(image)
-        .fill(fill)
-        .corner_radius(CornerRadius::same(12))
-        .min_size(Vec2::new(width, TAP_MIN));
-    ui.add_enabled(enabled, button)
+    image.paint_at(ui, icon_rect);
+    if enabled {
+        response
+    } else {
+        ui.interact(rect, response.id, Sense::hover())
+    }
 }
 
 fn format_time(seconds: f64) -> String {

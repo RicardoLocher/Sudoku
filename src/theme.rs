@@ -170,10 +170,10 @@ pub mod text {
     pub const TINY: f32 = 11.0;
 }
 
-/// A rounded, subtly shadowed background frame used for the top bar and pad.
+/// A subtly shadowed background frame used for the top bar and pad.
 pub fn chrome_frame(fill: Color32) -> egui::Frame {
     egui::Frame::new()
         .fill(fill)
         .inner_margin(egui::Margin::symmetric(12, 8))
-        .corner_radius(CornerRadius::same(14))
+        .corner_radius(CornerRadius::ZERO)
 }

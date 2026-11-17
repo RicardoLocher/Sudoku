@@ -84,12 +84,17 @@ QoL, **P2** = nice-to-have / later.
       same row/col/box ("Clean notes" toggle).
 - [x] Long-press a digit in the pad to toggle notes for that digit.
 - [x] Undo groups a placement with its auto-note cleanup as one step.
+- [x] **Auto notes** button (bottom action row, replacing the Redo button):
+      fills every empty cell with its pencil candidates for the current board,
+      leaving out the cell's solution digit so nothing is given away. One tap =
+      one undo step; tapping again is a no-op.
 
 ### 2.6 Undo/redo & input (P0/P1)
-- [x] Add **Redo** (wired into the bottom toolbar, plus Ctrl+Y).
+- [x] Redo stack in the core (`Game::redo`, used by tests); its button was later
+      replaced by **Auto notes**, so redo is no longer reachable from the UI.
 - [x] Undo reverts a whole placement including auto-note cleanup.
-- [x] Keyboard input on desktop (digits 1–9, arrows/WASD, backspace, N, H, Z);
-      mobile stays first-class.
+- [x] Keyboard input on desktop (digits 1–9, arrows/WASD, backspace, N, H, Z,
+      Ctrl+A for auto notes); mobile stays first-class.
 - [x] Tap an already-filled selected cell's digit again to erase (documented in
       `Game::play`).
 

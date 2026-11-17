@@ -14,7 +14,7 @@ Icons under `assets/icons/` (and the derived 48×48 alpha masks in
 <https://fonts.google.com/icons>.
 
 - Files: `menu`, `pause`, `play_arrow`, `undo`, `redo`, `edit`, `ink_eraser`,
-  `timer`, `lightbulb`, `celebration`.
+  `timer`, `lightbulb`, `celebration`, `filter_9_plus`.
 - License: Apache License 2.0.
 
 ```
