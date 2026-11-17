@@ -40,6 +40,31 @@ pub fn is_solved(grid: &Grid) -> bool {
     grid.iter().all(|row| row.iter().all(|&v| v != EMPTY))
 }
 
+/// Iterate the row, column and 3×3 box peers of `(row, col)`, excluding the
+/// cell itself (which is yielded first).
+pub fn peers(row: usize, col: usize) -> impl Iterator<Item = (usize, usize)> {
+    let box_row = row / BOX * BOX;
+    let box_col = col / BOX * BOX;
+    let mut cells = Vec::with_capacity(21);
+    cells.push((row, col));
+    for i in 0..SIZE {
+        if i != col {
+            cells.push((row, i));
+        }
+        if i != row {
+            cells.push((i, col));
+        }
+    }
+    for r in box_row..box_row + BOX {
+        for c in box_col..box_col + BOX {
+            if r != row && c != col {
+                cells.push((r, c));
+            }
+        }
+    }
+    cells.into_iter()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

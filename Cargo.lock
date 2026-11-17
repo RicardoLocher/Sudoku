@@ -9,6 +9,7 @@ dependencies = [
  "android-activity",
  "eframe",
  "egui",
+ "web-time",
  "winit",
 ]
 

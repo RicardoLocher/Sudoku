@@ -1,15 +1,25 @@
 pub mod game;
 pub mod generator;
 pub mod grid;
+pub mod platform;
 pub mod rng;
+pub mod settings;
 pub mod solver;
+pub mod storage;
+
+#[cfg(feature = "desktop")]
+pub mod theme;
+
+#[cfg(feature = "desktop")]
+pub mod icons;
 
 #[cfg(feature = "desktop")]
 pub mod ui;
 
-pub use game::Game;
+pub use game::{Game, Stats};
 pub use generator::{Difficulty, Puzzle, clue_count, generate};
 pub use grid::{EMPTY, SIZE};
+pub use settings::{Settings, ThemeMode};
 
 #[cfg(feature = "desktop")]
 pub fn native_options() -> eframe::NativeOptions {
@@ -30,11 +40,27 @@ pub fn native_options() -> eframe::NativeOptions {
 #[cfg(all(feature = "desktop", target_os = "android"))]
 #[unsafe(no_mangle)]
 fn android_main(app: winit::platform::android::activity::AndroidApp) {
+    let storage_dir = app
+        .internal_data_path()
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let storage: Box<dyn storage::Storage> =
+        Box::new(storage::FileStorage::new(storage_dir.join("sudoku")));
+
+    // Keep a handle so the UI can query safe-area insets (notches / gesture bar)
+    // every frame; `AndroidApp` shares state internally.
+    let insets_provider = platform::InsetsProvider::new(app.clone());
+
     let mut options = native_options();
     options.android_app = Some(app);
     let _ = eframe::run_native(
         "Sudoku",
         options,
-        Box::new(|_cc| Ok(Box::new(ui::SudokuApp::new(1)))),
+        Box::new(move |_cc| {
+            Ok(Box::new(ui::SudokuApp::with_storage(
+                1,
+                storage,
+                insets_provider,
+            )))
+        }),
     );
 }

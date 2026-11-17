@@ -28,6 +28,36 @@ impl Difficulty {
             Difficulty::Expert,
         ]
     }
+
+    /// Stable one-word name used for persistence.
+    pub fn key(self) -> &'static str {
+        match self {
+            Difficulty::Easy => "easy",
+            Difficulty::Medium => "medium",
+            Difficulty::Hard => "hard",
+            Difficulty::Expert => "expert",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Difficulty> {
+        match key {
+            "easy" => Some(Difficulty::Easy),
+            "medium" => Some(Difficulty::Medium),
+            "hard" => Some(Difficulty::Hard),
+            "expert" => Some(Difficulty::Expert),
+            _ => None,
+        }
+    }
+
+    /// Friendly label for menus and the win screen.
+    pub fn label(self) -> &'static str {
+        match self {
+            Difficulty::Easy => "Easy",
+            Difficulty::Medium => "Medium",
+            Difficulty::Hard => "Hard",
+            Difficulty::Expert => "Expert",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
