@@ -3,12 +3,13 @@ fn main() -> eframe::Result<()> {
     let storage: Box<dyn sudoku::storage::Storage> = Box::new(sudoku::storage::FileStorage::new(
         sudoku::storage::FileStorage::default_dir(),
     ));
+    let seed = sudoku::random_seed::random_seed();
     eframe::run_native(
         "Sudoku",
         sudoku::native_options(),
         Box::new(move |_cc| {
             Ok(Box::new(sudoku::ui::SudokuApp::with_storage(
-                1,
+                seed,
                 storage,
                 sudoku::platform::InsetsProvider::new(),
             )))

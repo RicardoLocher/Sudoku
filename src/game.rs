@@ -324,7 +324,7 @@ impl Game {
     }
 
     pub fn digit_remaining(&self, digit: u8) -> u8 {
-        (SIZE - self.digit_count(digit)) as u8
+        SIZE.saturating_sub(self.digit_count(digit)) as u8
     }
 
     pub fn is_digit_complete(&self, digit: u8) -> bool {
@@ -596,6 +596,24 @@ mod tests {
 
         assert_eq!(game.digit_count(digit), 9);
         assert!(game.is_digit_complete(digit));
+    }
+
+    #[test]
+    fn digit_remaining_saturates_on_duplicate_digits() {
+        let mut game = game();
+        let empty: Vec<(usize, usize)> = (0..SIZE)
+            .flat_map(|r| (0..SIZE).map(move |c| (r, c)))
+            .filter(|&(r, c)| !game.is_given(r, c))
+            .collect();
+        assert!(empty.len() > SIZE, "puzzle needs enough blanks");
+
+        // Calm mode allows placing the same digit on every empty cell, which can
+        // push the count past nine; digit_remaining must not underflow.
+        for &(r, c) in empty.iter().take(SIZE + 1) {
+            game.play(r, c, 5);
+        }
+        assert!(game.digit_count(5) > SIZE);
+        assert_eq!(game.digit_remaining(5), 0);
     }
 
     #[test]

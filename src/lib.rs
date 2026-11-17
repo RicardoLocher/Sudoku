@@ -2,6 +2,7 @@ pub mod game;
 pub mod generator;
 pub mod grid;
 pub mod platform;
+pub mod random_seed;
 pub mod rng;
 pub mod settings;
 pub mod solver;
@@ -52,12 +53,13 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
 
     let mut options = native_options();
     options.android_app = Some(app);
+    let seed = random_seed::random_seed();
     let _ = eframe::run_native(
         "Sudoku",
         options,
         Box::new(move |_cc| {
             Ok(Box::new(ui::SudokuApp::with_storage(
-                1,
+                seed,
                 storage,
                 insets_provider,
             )))

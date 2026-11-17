@@ -7,6 +7,7 @@
 use crate::generator::{Difficulty, generate};
 use crate::icons::{Icon, IconStore};
 use crate::platform::{Insets, InsetsProvider};
+use crate::random_seed::random_seed;
 use crate::settings::{Settings, ThemeMode};
 use crate::storage::{SAVE_KEY, SETTINGS_KEY, Storage};
 use crate::theme::{Palette, Theme, chrome_frame, text};
@@ -104,7 +105,16 @@ impl SudokuApp {
                         let difficulty = game.difficulty();
                         let seed = game.seed();
                         game.set_settings(settings);
-                        (game, difficulty, seed)
+                        // If the saved game is complete, start a fresh random game
+                        if game.is_complete() {
+                            let new_seed = random_seed();
+                            let mut new_game =
+                                Game::with_settings(generate(difficulty, new_seed), settings);
+                            new_game.set_seed(new_seed);
+                            (new_game, difficulty, new_seed)
+                        } else {
+                            (game, difficulty, seed)
+                        }
                     }
                     None => {
                         let difficulty = Difficulty::Medium;
@@ -152,7 +162,7 @@ impl SudokuApp {
     }
 
     fn new_game(&mut self, difficulty: Difficulty) {
-        self.seed = self.seed.wrapping_add(1);
+        self.seed = random_seed();
         self.difficulty = difficulty;
         let mut game = Game::with_settings(generate(difficulty, self.seed), self.settings);
         game.set_seed(self.seed);
