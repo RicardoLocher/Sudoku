@@ -58,6 +58,9 @@ pub struct SudokuApp {
     flash_digit: Option<u8>,
     flash_time: f64,
     accent_time: f64,
+    /// Cell that briefly flashes to warn about a rejected (illegal) note.
+    warn_cell: Option<(usize, usize)>,
+    warn_time: f64,
 
     /// Last frame's focus/viewport visibility, for auto-pause detection.
     was_visible: bool,
@@ -150,6 +153,8 @@ impl SudokuApp {
             flash_digit: None,
             flash_time: 0.0,
             accent_time: 0.0,
+            warn_cell: None,
+            warn_time: 0.0,
             was_visible: true,
             settings_dirty: false,
             insets_provider,
@@ -174,6 +179,7 @@ impl SudokuApp {
         self.paused = false;
         self.dialog = Dialog::None;
         self.flash_digit = None;
+        self.warn_cell = None;
         self.save_now();
     }
 
@@ -196,6 +202,8 @@ impl SudokuApp {
         self.started = false;
         self.paused = false;
         self.dialog = Dialog::None;
+        self.flash_digit = None;
+        self.warn_cell = None;
         self.save_now();
     }
 
@@ -239,7 +247,13 @@ impl SudokuApp {
         }
 
         if self.note_mode {
-            self.game.toggle_note(row, col, digit);
+            if !self.game.toggle_note(row, col, digit) {
+                // Rejected an illegal note (or a no-op): flash the cell as a cue.
+                if !self.game.has_note(row, col, digit) {
+                    self.warn_cell = Some((row, col));
+                    self.warn_time = 0.0;
+                }
+            }
         } else {
             self.start_clock();
             self.game.play(row, col, digit);
@@ -323,11 +337,14 @@ impl SudokuApp {
         if self.flash_digit.is_some() {
             self.flash_time += 1.0 / 60.0;
         }
+        if self.warn_cell.is_some() {
+            self.warn_time += 1.0 / 60.0;
+        }
 
         if self.running() {
             ctx.request_repaint_after(std::time::Duration::from_millis(500));
             ctx.request_repaint();
-        } else if self.flash_digit.is_some() {
+        } else if self.flash_digit.is_some() || self.warn_cell.is_some() {
             ctx.request_repaint();
         }
 
@@ -342,6 +359,18 @@ impl SudokuApp {
     fn cell_rect(grid_rect: Rect, cell: f32, row: usize, col: usize) -> Rect {
         let min = grid_rect.min + Vec2::new(col as f32 * cell, row as f32 * cell);
         Rect::from_min_size(min, Vec2::splat(cell))
+    }
+
+    /// The small sub-cell occupied by note `digit` inside a cell rectangle.
+    fn note_rect(cell_rect: Rect, cell: f32, digit: u8) -> Rect {
+        Rect::from_min_size(
+            cell_rect.min
+                + Vec2::new(
+                    ((digit - 1) % 3) as f32 * cell / 3.0,
+                    ((digit - 1) / 3) as f32 * cell / 3.0,
+                ),
+            Vec2::splat(cell / 3.0),
+        )
     }
 
     fn draw_board(&mut self, ui: &mut egui::Ui, palette: &Palette) {
@@ -402,12 +431,16 @@ impl SudokuApp {
             if self.settings.highlight_same_digit && selected_value != 0 {
                 for r in 0..SIZE {
                     for c in 0..SIZE {
+                        let rect = Self::cell_rect(grid_rect, cell, r, c);
                         if self.game.value(r, c) == selected_value {
-                            painter.rect_filled(
-                                Self::cell_rect(grid_rect, cell, r, c),
-                                radius,
-                                palette.highlight_same,
-                            );
+                            // Cells already holding the digit get a full highlight.
+                            painter.rect_filled(rect, radius, palette.highlight_same);
+                        } else if self.game.value(r, c) == 0
+                            && self.game.has_note(r, c, selected_value)
+                        {
+                            // Notes of that digit get just the note's sub-cell.
+                            let mini = Self::note_rect(rect, cell, selected_value);
+                            painter.rect_filled(mini, CornerRadius::same(4), palette.accent_weak);
                         }
                     }
                 }
@@ -460,20 +493,20 @@ impl SudokuApp {
                         if !self.game.has_note(row, col, digit) {
                             continue;
                         }
-                        let mini = Rect::from_min_size(
-                            rect.min
-                                + Vec2::new(
-                                    ((digit - 1) % 3) as f32 * cell / 3.0,
-                                    ((digit - 1) / 3) as f32 * cell / 3.0,
-                                ),
-                            Vec2::splat(cell / 3.0),
-                        );
+                        let mini = Self::note_rect(rect, cell, digit);
+                        // Notes that violate Sudoku rules (digit already in the
+                        // row/column/box) are flagged in red.
+                        let note_color = if self.game.note_is_legal(row, col, digit) {
+                            palette.note_text
+                        } else {
+                            palette.conflict_marker
+                        };
                         painter.text(
                             mini.center(),
                             Align2::CENTER_CENTER,
                             digit.to_string(),
                             small_font.clone(),
-                            palette.note_text,
+                            note_color,
                         );
                     }
                 }
@@ -514,6 +547,23 @@ impl SudokuApp {
                         palette.flash.gamma_multiply(alpha * 0.9),
                     );
                 }
+            }
+        }
+
+        // Brief red flash warning that an illegal note was rejected.
+        if let Some((r, c)) = self.warn_cell {
+            let t = self.warn_time;
+            if t > 0.5 {
+                self.warn_cell = None;
+            } else {
+                let alpha = (1.0 - t / 0.5).clamp(0.0, 1.0) as f32;
+                let rect = Self::cell_rect(grid_rect, cell, r, c);
+                painter.rect_stroke(
+                    rect.shrink(1.0),
+                    radius,
+                    Stroke::new(3.0, palette.conflict_marker.gamma_multiply(alpha)),
+                    egui::StrokeKind::Inside,
+                );
             }
         }
 

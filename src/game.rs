@@ -1,5 +1,5 @@
 use crate::generator::{Difficulty, Puzzle};
-use crate::grid::{EMPTY, Grid, SIZE, peers};
+use crate::grid::{EMPTY, Grid, SIZE, is_safe, peers};
 use crate::settings::Settings;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,9 +201,28 @@ impl Game {
         None
     }
 
-    pub fn toggle_note(&mut self, row: usize, col: usize, digit: u8) {
+    /// Whether `digit` may legally be noted in `(row, col)`: it must not already
+    /// appear as a value in the same row, column or box. This is a rules check
+    /// only; it does not compare against the solution.
+    pub fn note_is_legal(&self, row: usize, col: usize, digit: u8) -> bool {
+        is_safe(&self.cells, row, col, digit)
+    }
+
+    /// Toggle a pencil note. Illegal notes (a digit already present in the same
+    /// row/column/box) are rejected and never recorded, so the player cannot
+    /// write a note that breaks Sudoku rules. Clearing an existing note is
+    /// always allowed. Returns `true` when the notes actually changed.
+    ///
+    /// Notes never count as mistakes regardless of mode.
+    pub fn toggle_note(&mut self, row: usize, col: usize, digit: u8) -> bool {
         if self.is_given(row, col) || self.cells[row][col] != EMPTY {
-            return;
+            return false;
+        }
+
+        let bit = 1u16 << digit;
+        let currently_set = self.notes[row][col] & bit != 0;
+        if !currently_set && !self.note_is_legal(row, col, digit) {
+            return false;
         }
 
         self.history.push(Move::Notes {
@@ -213,8 +232,8 @@ impl Game {
         });
         self.redo.clear();
 
-        let bit = 1u16 << digit;
         self.notes[row][col] ^= bit;
+        true
     }
 
     pub fn has_note(&self, row: usize, col: usize, digit: u8) -> bool {
@@ -556,20 +575,71 @@ mod tests {
     #[test]
     fn notes_toggle_and_undo() {
         let mut game = game();
-        let mut target = None;
-        for row in 0..SIZE {
-            for col in 0..SIZE {
-                if !game.is_given(row, col) {
-                    target = Some((row, col));
-                    break;
-                }
-            }
-        }
-        let (row, col) = target.expect("puzzle has an empty cell");
-        game.toggle_note(row, col, 3);
-        assert!(game.has_note(row, col, 3));
+        let (row, col) = first_empty(&game);
+        // Pick a digit that is legal to note in this cell.
+        let digit = (1..=9u8)
+            .find(|&d| game.note_is_legal(row, col, d))
+            .expect("a legal note digit exists");
+        game.toggle_note(row, col, digit);
+        assert!(game.has_note(row, col, digit));
         game.undo();
-        assert!(!game.has_note(row, col, 3));
+        assert!(!game.has_note(row, col, digit));
+    }
+
+    /// First non-given, empty cell in reading order.
+    fn first_empty(game: &Game) -> (usize, usize) {
+        (0..SIZE)
+            .flat_map(|r| (0..SIZE).map(move |c| (r, c)))
+            .find(|&(r, c)| !game.is_given(r, c) && game.value(r, c) == EMPTY)
+            .expect("puzzle has an empty cell")
+    }
+
+    #[test]
+    fn illegal_notes_are_rejected_and_never_count_as_mistakes() {
+        let mut game = game();
+        let (row, col) = first_empty(&game);
+        // A digit already present in a peer is illegal to note here.
+        let illegal = (1..=9u8)
+            .find(|&d| !game.note_is_legal(row, col, d))
+            .expect("some digit conflicts with a peer");
+        let before = game.stats();
+
+        assert!(!game.toggle_note(row, col, illegal));
+        assert!(!game.has_note(row, col, illegal));
+        assert!(!game.can_undo(), "rejected note must not be recorded");
+        assert_eq!(game.stats(), before, "notes never affect stats");
+    }
+
+    #[test]
+    fn legal_note_matching_solution_is_accepted() {
+        let mut game = game();
+        let (row, col) = first_empty(&game);
+        // The solution digit is always legal because the puzzle has one solution.
+        let digit = game.solution[row][col];
+        assert!(game.note_is_legal(row, col, digit));
+        assert!(game.toggle_note(row, col, digit));
+        assert!(game.has_note(row, col, digit));
+    }
+
+    #[test]
+    fn clearing_an_existing_illegal_note_is_allowed() {
+        let mut game = game();
+        let (row, col) = first_empty(&game);
+        let legal = (1..=9u8)
+            .find(|&d| game.note_is_legal(row, col, d))
+            .expect("a legal note digit exists");
+        game.toggle_note(row, col, legal);
+        assert!(game.has_note(row, col, legal));
+
+        // Make the note illegal after the fact by planting its digit in a peer.
+        let peer = crate::grid::peers(row, col)
+            .find(|&(r, c)| (r, c) != (row, col) && !game.is_given(r, c))
+            .expect("cell has a non-given peer");
+        game.cells[peer.0][peer.1] = legal;
+        assert!(!game.note_is_legal(row, col, legal));
+
+        assert!(game.toggle_note(row, col, legal), "removal stays allowed");
+        assert!(!game.has_note(row, col, legal));
     }
 
     #[test]
